@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gravador de Áudio - TEA</title>
+
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 620px;
+        margin: 24px auto;
+        padding: 18px;
+        background: #f7f7f7;
+        line-height: 1.5;
+      }
+
+      .container {
+        background: #ffffff;
+        padding: 24px;
+        border-radius: 12px;
+        box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10);
+      }
+
+      h1 {
+        font-size: 24px;
+        margin-bottom: 8px;
+      }
+
+      .instruction {
+        background: #eef6ff;
+        padding: 14px;
+        border-radius: 8px;
+        margin: 16px 0;
+      }
+
+      .timer {
+        font-size: 36px;
+        font-weight: bold;
+        color: #c5221f;
+        margin: 18px 0;
+      }
+
+      button {
+        margin-top: 10px;
+        margin-right: 8px;
+        padding: 12px 16px;
+        font-size: 15px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        background: #1a73e8;
+        color: white;
+      }
+
+      button:disabled {
+        background: #aaa;
+        cursor: not-allowed;
+      }
+
+      .danger {
+        background: #c5221f;
+      }
+
+      .success {
+        background: #188038;
+      }
+
+      .secondary {
+        background: #5f6368;
+      }
+
+      audio {
+        display: block;
+        width: 100%;
+        margin-top: 18px;
+      }
+
+      #status {
+        margin-top: 16px;
+        font-weight: bold;
+      }
+
+      .small {
+        font-size: 13px;
+        color: #555;
+      }
+
+      .warning {
+        background: #fff3cd;
+        border: 1px solid #ffe69c;
+        padding: 12px;
+        border-radius: 8px;
+        margin-top: 16px;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="container">
+      <h1>Gravador de áudio</h1>
+
+      <div class="instruction">
+        <p>
+          Grave um áudio do participante contando de <strong>1 a 10</strong>,
+          pausadamente, como se estivesse contando os segundos.
+        </p>
+
+        <p>
+          Depois, ouça a gravação. Se estiver correta, clique em
+          <strong>Usar este áudio</strong>.
+        </p>
+      </div>
+
+      <p class="small">
+        Item: <span id="itemName">Audio_01</span>
+      </p>
+
+      <div id="timer" class="timer">00:00</div>
+
+      <button id="btnStart">
+        Iniciar gravação
+      </button>
+
+      <button id="btnStop" class="danger" disabled>
+        Finalizar gravação
+      </button>
+
+      <button id="btnUse" class="success" disabled>
+        Usar este áudio
+      </button>
+
+      <button id="btnAgain" class="secondary" disabled>
+        Regravar
+      </button>
+
+      <audio id="audioPreview" controls style="display:none;"></audio>
+
+      <div id="status">
+        Clique em “Iniciar gravação”.
+      </div>
+
+      <div class="warning">
+        <p class="small">
+          Se o navegador pedir permissão para usar o microfone, clique em
+          <strong>Permitir</strong>.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+
+      const ITEM = params.get('item') || 'Audio_01';
+
+      // Origem da janela que abriu o gravador.
+      // O Apps Script pode usar uma origem dinâmica, então recebemos isso pela URL.
+      const RETURN_ORIGIN = params.get('returnOrigin') || '*';
+
+      document.getElementById('itemName').textContent = ITEM;
+
+      const btnStart = document.getElementById('btnStart');
+      const btnStop = document.getElementById('btnStop');
+      const btnUse = document.getElementById('btnUse');
+      const btnAgain = document.getElementById('btnAgain');
+      const audioPreview = document.getElementById('audioPreview');
+      const statusDiv = document.getElementById('status');
+      const timerDiv = document.getElementById('timer');
+
+      let stream = null;
+      let mediaRecorder = null;
+      let audioChunks = [];
+      let recordedBlob = null;
+
+      let timerInterval = null;
+      let recordingStartedAt = null;
+
+      function getPreferredMimeType() {
+        const types = [
+          'audio/ogg;codecs=opus',
+          'audio/webm;codecs=opus',
+          'audio/ogg',
+          'audio/webm'
+        ];
+
+        if (!window.MediaRecorder || !MediaRecorder.isTypeSupported) {
+          return '';
+        }
+
+        for (const type of types) {
+          if (MediaRecorder.isTypeSupported(type)) {
+            return type;
+          }
+        }
+
+        return '';
+      }
+
+      function getExtensionFromMimeType(mimeType) {
+        const clean = String(mimeType || '').split(';')[0];
+
+        if (clean === 'audio/ogg') return 'ogg';
+        if (clean === 'audio/webm') return 'webm';
+
+        return 'webm';
+      }
+
+      function startTimer() {
+        recordingStartedAt = Date.now();
+
+        timerInterval = setInterval(() => {
+          const elapsed = Math.floor((Date.now() - recordingStartedAt) / 1000);
+          const minutes = String(Math.floor(elapsed / 60)).padStart(2, '0');
+          const seconds = String(elapsed % 60).padStart(2, '0');
+
+          timerDiv.textContent = `${minutes}:${seconds}`;
+        }, 300);
+      }
+
+      function stopTimer() {
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+      }
+
+      function stopStream() {
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+        }
+      }
+
+      function resetRecording() {
+        recordedBlob = null;
+        audioChunks = [];
+
+        audioPreview.removeAttribute('src');
+        audioPreview.style.display = 'none';
+
+        btnStart.disabled = false;
+        btnStop.disabled = true;
+        btnUse.disabled = true;
+        btnAgain.disabled = true;
+
+        timerDiv.textContent = '00:00';
+        statusDiv.textContent = 'Clique em “Iniciar gravação”.';
+      }
+
+      function blobToBase64(blob) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+
+          reader.onloadend = () => {
+            const result = reader.result;
+            const base64 = result.split(',')[1];
+            resolve(base64);
+          };
+
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      }
+
+      async function startRecording() {
+        try {
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            throw new Error('Este navegador não liberou acesso ao microfone.');
+          }
+
+          if (!window.MediaRecorder) {
+            throw new Error('Este navegador não suporta gravação direta por MediaRecorder.');
+          }
+
+          resetRecording();
+
+          const preferredMimeType = getPreferredMimeType();
+
+          stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true
+            }
+          });
+
+          const options = preferredMimeType ? { mimeType: preferredMimeType } : {};
+          mediaRecorder = new MediaRecorder(stream, options);
+
+          mediaRecorder.ondataavailable = event => {
+            if (event.data && event.data.size > 0) {
+              audioChunks.push(event.data);
+            }
+          };
+
+          mediaRecorder.onstop = () => {
+            stopTimer();
+
+            const finalMimeType =
+              mediaRecorder.mimeType || preferredMimeType || 'audio/webm';
+
+            recordedBlob = new Blob(audioChunks, {
+              type: finalMimeType
+            });
+
+            audioPreview.src = URL.createObjectURL(recordedBlob);
+            audioPreview.style.display = 'block';
+
+            btnStart.disabled = true;
+            btnStop.disabled = true;
+            btnUse.disabled = false;
+            btnAgain.disabled = false;
+
+            statusDiv.textContent =
+              'Gravação finalizada. Ouça o áudio. Se estiver correto, clique em “Usar este áudio”.';
+
+            stopStream();
+          };
+
+          mediaRecorder.start();
+
+          startTimer();
+
+          btnStart.disabled = true;
+          btnStop.disabled = false;
+          btnUse.disabled = true;
+          btnAgain.disabled = true;
+
+          statusDiv.textContent = 'Gravando...';
+
+        } catch (error) {
+          statusDiv.textContent = 'Erro ao acessar o microfone: ' + error.message;
+
+          stopTimer();
+          stopStream();
+
+          btnStart.disabled = false;
+          btnStop.disabled = true;
+        }
+      }
+
+      function stopRecording() {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          statusDiv.textContent = 'Finalizando gravação...';
+          mediaRecorder.stop();
+        }
+      }
+
+      async function useRecording() {
+        try {
+          if (!recordedBlob) {
+            statusDiv.textContent = 'Nenhum áudio gravado foi encontrado.';
+            return;
+          }
+
+          if (!window.opener) {
+            statusDiv.textContent =
+              'Não foi possível encontrar o formulário original. Abra o gravador pelo botão do formulário.';
+            return;
+          }
+
+          const audioBase64 = await blobToBase64(recordedBlob);
+          const extension = getExtensionFromMimeType(recordedBlob.type);
+          const fileName = `${ITEM}.${extension}`;
+
+          const payload = {
+            type: 'AUDIO_GRAVADO_TEA',
+            item: ITEM,
+            audioBase64: audioBase64,
+            mimeType: recordedBlob.type || 'audio/webm',
+            fileName: fileName,
+            recordedAt: new Date().toISOString()
+          };
+
+          window.opener.postMessage(payload, RETURN_ORIGIN);
+
+          statusDiv.textContent = 'Áudio enviado ao formulário. Esta janela será fechada.';
+
+          setTimeout(() => {
+            window.close();
+          }, 600);
+
+        } catch (error) {
+          statusDiv.textContent = 'Erro ao enviar áudio ao formulário: ' + error.message;
+        }
+      }
+
+      btnStart.addEventListener('click', startRecording);
+      btnStop.addEventListener('click', stopRecording);
+      btnUse.addEventListener('click', useRecording);
+      btnAgain.addEventListener('click', resetRecording);
+    </script>
+  </body>
+</html>
