@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Gravador — Depressão e Obesidade</title>
+<style>body{font:17px/1.6 Arial,sans-serif;background:#edf4f6;color:#24353d;margin:0;padding:20px}main{max-width:600px;margin:auto;padding:24px;background:white;border-radius:12px}h1{font-size:24px}button{padding:12px 16px;margin:8px 5px 8px 0;background:#176475;color:white;border:0;border-radius:6px;font:inherit;cursor:pointer}button:disabled{opacity:.45;cursor:default}audio{width:100%}#timer{font-size:28px;font-weight:bold}#status{padding:12px;border-radius:8px;background:#edf4f6;overflow-wrap:anywhere}a{color:#176475}[hidden]{display:none!important}</style></head>
+<body><main><h1>Gravador de voz</h1><h2 id="task"></h2><p id="instruction"></p><p>Escolha um local silencioso e mantenha o celular próximo, sem encostar no microfone.</p>
+<p id="timer">0,0 s</p><button id="start" disabled>Iniciar gravação</button><button id="stop" disabled>Parar</button>
+<audio id="preview" controls hidden></audio><button id="use" disabled>Usar este áudio</button><button id="again" disabled>Regravar</button>
+<p id="status" role="status" aria-live="polite">Abra esta janela pelo botão do formulário.</p><a id="download" hidden>Baixar uma cópia do áudio</a>
+<p>Depois de usar o áudio, volte ao formulário. As gravações só são enviadas à pesquisa quando o formulário é enviado.</p></main>
+<script>
+'use strict';
+const params=new URLSearchParams(location.search),item=params.get('item'),requestId=params.get('requestId'),returnOrigin=params.get('returnOrigin');
+const tasks={vogal_a:{seconds:5,title:'Vogal “a” — 5 segundos',instruction:'Sustente a vogal “a” por 5 segundos, em tom e volume confortáveis, sem forçar a voz.'},ultima_semana:{seconds:30,title:'Sua última semana — cerca de 30 segundos',instruction:'Conte, com suas próprias palavras, como foi sua última semana. O tempo proposto é de 30 segundos.'}};
+const task=tasks[item],start=document.getElementById('start'),stop=document.getElementById('stop'),use=document.getElementById('use'),again=document.getElementById('again'),preview=document.getElementById('preview'),statusBox=document.getElementById('status'),timer=document.getElementById('timer'),download=document.getElementById('download');
+let stream=null,recorder=null,blob=null,objectURL=null,duration=null,interval=null,limit=null,ackTimer=null,sending=false;
+function validOrigin(value){try{const u=new URL(value);return u.protocol==='https:'&&u.origin===value&&(u.hostname==='script.google.com'||u.hostname==='script.googleusercontent.com'||u.hostname.endsWith('-script.googleusercontent.com'));}catch(e){return false;}}
+const valid=!!(task&&/^[a-f0-9-]{36}$/i.test(requestId||'')&&validOrigin(returnOrigin)&&window.opener);
+function tell(type,extra={}){window.opener.postMessage({type,item,requestId,...extra},returnOrigin);}
+function stopTracks(){if(stream)stream.getTracks().forEach(t=>t.stop());stream=null;}
+function clearTimers(){clearInterval(interval);clearTimeout(limit);}
+function reset(){
+  clearTimers();blob=null;duration=null;if(objectURL)URL.revokeObjectURL(objectURL);objectURL=null;
+  preview.removeAttribute('src');preview.hidden=true;download.hidden=true;
+  start.disabled=!valid;stop.disabled=true;use.disabled=true;again.disabled=true;timer.textContent='0,0 s';
+  statusBox.textContent='Clique em Iniciar gravação e permita o microfone se o navegador solicitar.';
+}
+function stopRecording(){if(recorder&&recorder.state==='recording'){stop.disabled=true;statusBox.textContent='Finalizando gravação…';recorder.stop();}}
+async function record(){
+  if(!valid||start.disabled)return;reset();start.disabled=true;statusBox.textContent='Aguardando permissão do microfone…';
+  try{
+    if(!navigator.mediaDevices?.getUserMedia||!window.MediaRecorder)throw new Error('Gravação indisponível neste navegador. Abra em um navegador atualizado com HTTPS.');
+    stream=await navigator.mediaDevices.getUserMedia({audio:true});
+    const mime=['audio/webm;codecs=opus','audio/mp4','audio/ogg;codecs=opus'].find(m=>MediaRecorder.isTypeSupported(m));
+    recorder=new MediaRecorder(stream,mime?{mimeType:mime}:{});
+    const chunks=[];let started=0,failed=false;
+    recorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data);};
+    recorder.onerror=()=>{failed=true;clearTimers();stopTracks();start.disabled=false;stop.disabled=true;statusBox.textContent='Falha durante a gravação. Tente novamente.';};
+    recorder.onstop=()=>{
+      clearTimers();stopTracks();stop.disabled=true;duration=(performance.now()-started)/1000;
+      if(failed)return;
+      blob=new Blob(chunks,{type:recorder.mimeType||mime||'audio/webm'});
+      if(!blob.size||blob.size>10*1024*1024){blob=null;start.disabled=false;statusBox.textContent='Áudio vazio ou acima de 10 MB. Tente novamente.';return;}
+      objectURL=URL.createObjectURL(blob);preview.src=objectURL;preview.hidden=false;use.disabled=false;again.disabled=false;
+      const ext={'audio/webm':'webm','audio/ogg':'ogg','audio/mp4':'m4a'}[blob.type.split(';')[0]]||'webm';
+      download.href=objectURL;download.download=item+'.'+ext;download.hidden=false;
+      timer.textContent=duration.toFixed(1).replace('.',',')+' s';statusBox.textContent='Ouça o áudio. Se estiver correto, clique em Usar este áudio; caso contrário, clique em Regravar.';
+    };
+    recorder.start();started=performance.now();stop.disabled=false;statusBox.textContent='Gravando…';
+    interval=setInterval(()=>{timer.textContent=((performance.now()-started)/1000).toFixed(1).replace('.',',')+' / '+task.seconds+' s';},200);
+    limit=setTimeout(stopRecording,task.seconds*1000);
+  }catch(e){clearTimers();stopTracks();start.disabled=false;stop.disabled=true;
+    const hints={NotAllowedError:'O acesso ao microfone foi negado. Permita o microfone para este site nas configurações do navegador e tente novamente.',NotFoundError:'Nenhum microfone foi encontrado.',NotReadableError:'Não foi possível usar o microfone. Feche outros aplicativos que estejam usando-o.'};
+    statusBox.textContent=hints[e.name]||('Erro ao gravar: '+e.message);
+  }
+}
+function base64(value){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result.split(',')[1]);r.onerror=()=>reject(Error('Não foi possível ler o áudio.'));r.readAsDataURL(value);});}
+async function send(){
+  if(!blob||sending)return;sending=true;use.disabled=true;again.disabled=true;
+  try{
+    if(!window.opener||window.opener.closed)throw Error('O formulário foi fechado. Baixe o áudio e anexe-o ao reabrir o formulário.');
+    const audioBase64=await base64(blob);
+    statusBox.textContent='Enviando o áudio ao formulário…';
+    ackTimer=setTimeout(()=>{sending=false;use.disabled=false;again.disabled=false;statusBox.textContent='O formulário não confirmou o recebimento. Mantenha-o aberto e tente novamente. Você também pode baixar o áudio e anexá-lo ao formulário.';},8000);
+    tell('AUDIO_GRAVADO_DEP_OBES',{audioBase64,mimeType:blob.type,duration});
+  }catch(e){sending=false;use.disabled=false;again.disabled=false;statusBox.textContent=e.message;}
+}
+window.addEventListener('message',event=>{
+  const d=event.data;
+  if(event.origin!==returnOrigin||event.source!==window.opener||!d||d.type!=='DEP_OBES_AUDIO_RECEBIDO'||d.item!==item||d.requestId!==requestId)return;
+  clearTimeout(ackTimer);sending=false;use.disabled=true;again.disabled=true;
+  statusBox.textContent='Áudio recebido e confirmado no formulário. Esta janela será fechada.';setTimeout(()=>window.close(),900);
+});
+start.onclick=record;stop.onclick=stopRecording;again.onclick=reset;use.onclick=send;
+window.addEventListener('beforeunload',()=>{clearTimers();stopTracks();});
+if(valid){document.getElementById('task').textContent=task.title;document.getElementById('instruction').textContent=task.instruction;reset();tell('DEP_OBES_RECORDER_READY');}
+else statusBox.textContent='Abra o gravador pelo botão do formulário da pesquisa. Este link está incompleto ou não possui uma janela de origem válida.';
+</script></body></html>
