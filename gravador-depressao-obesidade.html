@@ -9,7 +9,7 @@
 <script>
 'use strict';
 const params=new URLSearchParams(location.search),item=params.get('item'),requestId=params.get('requestId'),returnOrigin=params.get('returnOrigin');
-const tasks={vogal_a:{seconds:5,title:'Vogal “a” — 5 segundos',instruction:'Sustente a vogal “a” por 5 segundos, em tom e volume confortáveis, sem forçar a voz.'},ultima_semana:{seconds:30,title:'Sua última semana — cerca de 30 segundos',instruction:'Conte, com suas próprias palavras, como foi sua última semana. O tempo proposto é de 30 segundos.'}};
+const tasks={vogal_a:{seconds:10,title:'Vogal “a” — 5 segundos',instruction:'Sustente a vogal “a” por 5 segundos, em tom e volume confortáveis, sem forçar a voz.'},ultima_semana:{seconds:30,title:'Sua última semana — cerca de 30 segundos',instruction:'Conte, com suas próprias palavras, como foi sua última semana. O tempo proposto é de 30 segundos.'}};
 const task=tasks[item],start=document.getElementById('start'),stop=document.getElementById('stop'),use=document.getElementById('use'),again=document.getElementById('again'),preview=document.getElementById('preview'),statusBox=document.getElementById('status'),timer=document.getElementById('timer'),download=document.getElementById('download');
 let stream=null,recorder=null,blob=null,objectURL=null,duration=null,interval=null,limit=null,ackTimer=null,sending=false;
 function validOrigin(value){try{const u=new URL(value);return u.protocol==='https:'&&u.origin===value&&(u.hostname==='script.google.com'||u.hostname==='script.googleusercontent.com'||u.hostname.endsWith('-script.googleusercontent.com'));}catch(e){return false;}}
